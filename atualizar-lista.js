@@ -84,9 +84,9 @@ async function coletarProcon(destino) {
     );
 
     await page.goto(URL_PROCON, { waitUntil: 'networkidle2', timeout: 30_000 });
-    await page.waitForSelector('table tr td', { timeout: 20_000 });
+    await page.waitForSelector('table.jtable tbody tr.jtable-data-row td:first-child', { timeout: 20_000 });
 
-    const textosCelulas = await page.$$eval('table tr td', (cells) =>
+    const textosCelulas = await page.$$eval('table.jtable tbody tr.jtable-data-row td:first-child', (cells) =>
       cells.map((c) => c.innerText.trim())
     );
 
