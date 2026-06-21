@@ -16,20 +16,12 @@ const IGNORE_LIST = [
   'facebook.com', 'instagram.com', 'whatsapp.com', 'linkedin.com',
 ];
 
-// --------------------------------------------------------------------------
-// Verifica se o domínio é ou pertence a um domínio da lista de exceções
-// Ex.: 'mail.google.com' → ignorado porque termina com '.google.com'
-// --------------------------------------------------------------------------
 function ehDominioIgnorado(dominio) {
   return IGNORE_LIST.some(
     (seguro) => dominio === seguro || dominio.endsWith('.' + seguro)
   );
 }
 
-// --------------------------------------------------------------------------
-// Faz uma requisição HTTPS com suporte a timeout e verifica o status HTTP.
-// Segue até 5 redirecionamentos automaticamente.
-// --------------------------------------------------------------------------
 function fazerRequisicao(url, opcoes = {}, redirecionamentos = 0) {
   return new Promise((resolve, reject) => {
     if (redirecionamentos > 5) {
@@ -37,7 +29,6 @@ function fazerRequisicao(url, opcoes = {}, redirecionamentos = 0) {
     }
 
     const req = https.get(url, opcoes, (res) => {
-      // Segue redirecionamentos (301, 302, 307, 308)
       if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
         return fazerRequisicao(res.headers.location, opcoes, redirecionamentos + 1)
           .then(resolve)
@@ -61,9 +52,6 @@ function fazerRequisicao(url, opcoes = {}, redirecionamentos = 0) {
   });
 }
 
-// --------------------------------------------------------------------------
-// Extrai o hostname de uma URL, removendo o prefixo "www."
-// --------------------------------------------------------------------------
 function extrairDominio(url) {
   try {
     const urlFormatada = url.startsWith('http') ? url : 'http://' + url;
@@ -73,23 +61,17 @@ function extrairDominio(url) {
   }
 }
 
-// --------------------------------------------------------------------------
-// FONTE 1 — Procon-SP (Puppeteer)
-// Abre o site em um browser headless real para executar o JavaScript da
-// página. Aguarda a tabela ser populada antes de extrair os domínios,
-// coletando o texto de cada célula da coluna de sites.
-// --------------------------------------------------------------------------
 async function coletarProcon(destino) {
   console.log('⏳ Coletando dados do Procon-SP via Puppeteer...');
 
   const browser = await puppeteer.launch({
-    headless: 'new',
+    headless: true,  // 'new' foi depreciado nas versões recentes do Puppeteer
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',   // evita crash por falta de memória no CI
-      '--disable-gpu',             // não há GPU no Actions
-      '--single-process',          // reduz uso de memória
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--single-process',
     ],
   });
 
@@ -102,12 +84,8 @@ async function coletarProcon(destino) {
     );
 
     await page.goto(URL_PROCON, { waitUntil: 'networkidle2', timeout: 30_000 });
-
-    // Aguarda aparecer pelo menos uma linha de dados na tabela.
-    // Ajuste o seletor caso o site use classes/ids diferentes.
     await page.waitForSelector('table tr td', { timeout: 20_000 });
 
-    // Extrai o texto de todas as células — os domínios ficam em colunas de texto
     const textosCelulas = await page.$$eval('table tr td', (cells) =>
       cells.map((c) => c.innerText.trim())
     );
@@ -115,7 +93,6 @@ async function coletarProcon(destino) {
     let contador = 0;
 
     for (const texto of textosCelulas) {
-      // Cada célula pode conter uma URL ou domínio puro
       const dominio = extrairDominio(texto);
       if (dominio && dominio.length > 4 && !ehDominioIgnorado(dominio)) {
         destino.add(dominio);
@@ -125,17 +102,10 @@ async function coletarProcon(destino) {
 
     console.log(`✅ Procon-SP: ${contador} domínios encontrados.`);
   } finally {
-    // Garante que o browser sempre fecha, mesmo em caso de erro
     await browser.close();
   }
 }
 
-// --------------------------------------------------------------------------
-// FONTE 2 — OpenPhish
-// Processa cada linha da feed como uma URL completa e extrai o domínio.
-// Qualquer domínio fora da IGNORE_LIST é adicionado — se está na feed,
-// foi classificado como phishing e deve entrar na blocklist.
-// --------------------------------------------------------------------------
 async function coletarOpenPhish(destino) {
   console.log('⏳ Coletando dados do OpenPhish...');
 
@@ -158,17 +128,12 @@ async function coletarOpenPhish(destino) {
   console.log(`✅ OpenPhish: ${contador} domínios encontrados.`);
 }
 
-// --------------------------------------------------------------------------
-// Orquestrador principal
-// --------------------------------------------------------------------------
 async function rodarRobo() {
   console.log('🤖 Iniciando atualização da Blocklist Híbrida...\n');
 
   const todosOsDominios = new Set();
   const erros = [];
 
-  // Procon usa Puppeteer (browser real) — roda separado do OpenPhish
-  // para evitar conflito de recursos com o browser headless.
   await coletarProcon(todosOsDominios).catch((err) => {
     erros.push(`Procon-SP: ${err.message}`);
     console.error('❌ Erro ao coletar dados do Procon-SP:', err.message);
