@@ -1,16 +1,13 @@
 name: Atualizador Automatico Procon-SP
-
 on:
   schedule:
     - cron: '30 22 * * *'
   workflow_dispatch: 
-
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
     - name: Checkout do repositorio
       uses: actions/checkout@v4
@@ -19,6 +16,17 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '20'
+
+    - name: Instalar dependencias do Chrome
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libgbm-dev libxkbcommon-dev libgtk-3-dev libasound2-dev \
+          libnss3 libatk-bridge2.0-0 libdrm2 libxcomposite1 \
+          libxdamage1 libxrandr2
+
+    - name: Instalar dependencias Node
+      run: npm install
 
     - name: Rodar script de raspagem híbrida
       run: node atualizar-lista.js
