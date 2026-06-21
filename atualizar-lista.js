@@ -2,6 +2,7 @@
 
 const https = require('https');
 const fs = require('fs');
+const puppeteer = require('puppeteer');
 
 const URL_PROCON = 'https://sistemas.procon.sp.gov.br/evitesite/list/evitesites.php';
 const URL_OPENPHISH = 'https://openphish.com/feed.txt';
@@ -73,43 +74,67 @@ function extrairDominio(url) {
 }
 
 // --------------------------------------------------------------------------
-// FONTE 1 — Procon-SP
-// Extrai domínios de atributos href dentro do HTML retornado,
-// evitando que qualquer texto aleatório seja capturado como domínio.
+// FONTE 1 — Procon-SP (Puppeteer)
+// Abre o site em um browser headless real para executar o JavaScript da
+// página. Aguarda a tabela ser populada antes de extrair os domínios,
+// coletando o texto de cada célula da coluna de sites.
 // --------------------------------------------------------------------------
 async function coletarProcon(destino) {
-  console.log('⏳ Coletando dados do Procon-SP...');
+  console.log('⏳ Coletando dados do Procon-SP via Puppeteer...');
 
-  const opcoes = {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    },
-  };
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',   // evita crash por falta de memória no CI
+      '--disable-gpu',             // não há GPU no Actions
+      '--single-process',          // reduz uso de memória
+    ],
+  });
 
-  const html = await fazerRequisicao(URL_PROCON, opcoes);
+  try {
+    const page = await browser.newPage();
 
-  // Captura apenas URLs dentro de atributos href/src/action
-  const regexHref = /(?:href|src|action)=["']https?:\/\/(?:www\.)?([^"'\/#?\s]+)/gi;
-  let match;
-  let contador = 0;
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    );
 
-  while ((match = regexHref.exec(html)) !== null) {
-    const dominio = match[1].toLowerCase().trim();
-    if (dominio.length > 4 && !ehDominioIgnorado(dominio)) {
-      destino.add(dominio);
-      contador++;
+    await page.goto(URL_PROCON, { waitUntil: 'networkidle2', timeout: 30_000 });
+
+    // Aguarda aparecer pelo menos uma linha de dados na tabela.
+    // Ajuste o seletor caso o site use classes/ids diferentes.
+    await page.waitForSelector('table tr td', { timeout: 20_000 });
+
+    // Extrai o texto de todas as células — os domínios ficam em colunas de texto
+    const textosCelulas = await page.$$eval('table tr td', (cells) =>
+      cells.map((c) => c.innerText.trim())
+    );
+
+    let contador = 0;
+
+    for (const texto of textosCelulas) {
+      // Cada célula pode conter uma URL ou domínio puro
+      const dominio = extrairDominio(texto);
+      if (dominio && dominio.length > 4 && !ehDominioIgnorado(dominio)) {
+        destino.add(dominio);
+        contador++;
+      }
     }
-  }
 
-  console.log(`✅ Procon-SP: ${contador} domínios encontrados.`);
+    console.log(`✅ Procon-SP: ${contador} domínios encontrados.`);
+  } finally {
+    // Garante que o browser sempre fecha, mesmo em caso de erro
+    await browser.close();
+  }
 }
 
 // --------------------------------------------------------------------------
 // FONTE 2 — OpenPhish
 // Processa cada linha da feed como uma URL completa e extrai o domínio.
-// O filtro foi ampliado para cobrir extensões comuns em phishing global.
+// Qualquer domínio fora da IGNORE_LIST é adicionado — se está na feed,
+// foi classificado como phishing e deve entrar na blocklist.
 // --------------------------------------------------------------------------
 async function coletarOpenPhish(destino) {
   console.log('⏳ Coletando dados do OpenPhish...');
@@ -126,18 +151,8 @@ async function coletarOpenPhish(destino) {
     if (!dominio) continue;
     if (ehDominioIgnorado(dominio)) continue;
 
-    // Extensões mais usadas em phishing (BR e global)
-    const extensoesPhishing = [
-      '.br', '.xyz', '.top', '.click', '.site',
-      '.online', '.info', '.shop', '.live', '.icu',
-      '.buzz', '.space', '.club', '.fun',
-    ];
-
-    const ehSuspeito = extensoesPhishing.some((ext) => dominio.endsWith(ext));
-    if (ehSuspeito) {
-      destino.add(dominio);
-      contador++;
-    }
+    destino.add(dominio);
+    contador++;
   }
 
   console.log(`✅ OpenPhish: ${contador} domínios encontrados.`);
@@ -152,20 +167,19 @@ async function rodarRobo() {
   const todosOsDominios = new Set();
   const erros = [];
 
-  // Coleta de cada fonte de forma independente — uma falha não impede a outra
-  await Promise.allSettled([
-    coletarProcon(todosOsDominios).catch((err) => {
-      erros.push(`Procon-SP: ${err.message}`);
-      console.error('❌ Erro ao coletar dados do Procon-SP:', err.message);
-    }),
-    coletarOpenPhish(todosOsDominios).catch((err) => {
-      erros.push(`OpenPhish: ${err.message}`);
-      console.error('❌ Erro ao coletar dados do OpenPhish:', err.message);
-    }),
-  ]);
+  // Procon usa Puppeteer (browser real) — roda separado do OpenPhish
+  // para evitar conflito de recursos com o browser headless.
+  await coletarProcon(todosOsDominios).catch((err) => {
+    erros.push(`Procon-SP: ${err.message}`);
+    console.error('❌ Erro ao coletar dados do Procon-SP:', err.message);
+  });
+
+  await coletarOpenPhish(todosOsDominios).catch((err) => {
+    erros.push(`OpenPhish: ${err.message}`);
+    console.error('❌ Erro ao coletar dados do OpenPhish:', err.message);
+  });
 
   if (todosOsDominios.size === 0) {
-    // Não grava arquivo com dados fictícios — apenas reporta a falha
     console.error('\n🚫 Nenhum domínio coletado. Arquivo NÃO atualizado.');
     console.error('   Erros encontrados:');
     erros.forEach((e) => console.error('   -', e));
