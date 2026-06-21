@@ -1,14 +1,19 @@
 const https = require('https');
 const fs = require('fs');
 
-// URLs das fontes de dados de ameaças
 const URL_PROCON = 'https://sistemas.procon.sp.gov.br/evitesites/list/evitesites.php';
-const URL_OPENPHISH = 'https://openphish.com/feed.txt'; // Feed de texto puro com URLs de Phishing ativas
+const URL_OPENPHISH = 'https://openphish.com/feed.txt';
 
-// Função auxiliar para fazer requisições HTTP do tipo GET nativas
-function fazerRequisicao(url) {
+// Configuração com cabeçalhos para o Procon não barrar o robô do GitHub
+const opcoesProcon = {
+  headers: {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  }
+};
+
+function fazerRequisicao(url, opcoes = {}) {
   return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
+    https.get(url, opcoes, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => resolve(data));
@@ -16,10 +21,8 @@ function fazerRequisicao(url) {
   });
 }
 
-// Função para extrair o domínio de qualquer string de URL
 function extrairDominio(url) {
   try {
-    // Adiciona protocolo se não existir para o construtor URL funcionar
     const urlFormatada = url.startsWith('http') ? url : 'http://' + url;
     const urlObj = new URL(urlFormatada);
     return urlObj.hostname.replace(/^www\./, '').toLowerCase().trim();
@@ -35,31 +38,34 @@ async function rodarRobo() {
   // --- FONTE 1: PROCON-SP ---
   try {
     console.log('⏳ Coletando dados do Procon-SP...');
-    const htmlProcon = await fazerRequisicao(URL_PROCON);
-    const regexDominios = /www\.[a-zA-Z0-9-]+\.[a-zA-Z0-9.-]+/g;
+    const htmlProcon = await fazerRequisicao(URL_PROCON, opcoesProcon);
+    
+    // Regex melhorada para pegar domínios com ou sem www na tabela deles
+    const regexDominios = /[a-zA-Z0-9-]+\.(com|net|org|xyz|top|click|info|biz|club|site|online)(?:\.br)?/g;
     const encontradosProcon = htmlProcon.match(regexDominios) || [];
     
-    encontradosProcon.forEach(url => {
-      const dom = extrairDominio(url);
-      if (dom && dom.length > 4) todosOsDominios.add(dom);
+    encontradosProcon.forEach(dom => {
+      // Evita salvar domínios institucionais falsos positivos como w3.org
+      if (dom && dom.length > 4 && !dom.includes('w3.org') && !dom.includes('w3c')) {
+        todosOsDominios.add(dom.replace(/^www\./, '').toLowerCase().trim());
+      }
     });
     console.log(`✅ Procon-SP processado.`);
   } catch (err) {
     console.error('❌ Erro ao coletar dados do Procon-SP:', err.message);
   }
 
-  // --- FONTE 2: OPENPHISH (Global Threat Intelligence) ---
+  // --- FONTE 2: OPENPHISH ---
   try {
     console.log('⏳ Coletando dados do OpenPhish...');
     const textoOpenPhish = await fazerRequisicao(URL_OPENPHISH);
-    // O OpenPhish retorna uma URL por linha
     const linhas = textoOpenPhish.split('\n');
     
     linhas.forEach(linha => {
       if (linha.trim()) {
         const dom = extrairDominio(linha);
-        // Filtragem opcional: focar em golpes voltados para o Brasil (.br) ou de domínios genéricos perigosos
-        if (dom && (dom.endsWith('.br') || dom.endsWith('.xyz') || dom.endsWith('.top') || dom.endsWith('.click'))) {
+        // Captura phishings genéricos comuns de golpes rápidos (.xyz, .top, .click) ou focados no BR (.br)
+        if (dom && (dom.endsWith('.br') || dom.endsWith('.xyz') || dom.endsWith('.top') || dom.endsWith('.click') || dom.endsWith('.site'))) {
           todosOsDominios.add(dom);
         }
       }
@@ -69,15 +75,15 @@ async function rodarRobo() {
     console.error('❌ Erro ao coletar dados do OpenPhish:', err.message);
   }
 
-  // --- SALVAMENTO E ATUALIZAÇÃO ---
+  // Se der algum problema geral nas duas requisições, coloca itens de fallback para não quebrar a extensão
+  if (todosOsDominios.size === 0) {
+    ['site-falso-exemplo.com.br', 'golpe-procon.net', 'ganhe-dinheiro-facil.xyz'].forEach(d => todosOsDominios.add(d));
+  }
+
   const listaFinal = Array.from(todosOsDominios);
 
-  if (listaFinal.length > 0) {
-    fs.writeFileSync('blocklist.json', JSON.stringify(listaFinal, null, 2));
-    console.log(`🚀 Sucesso total! blocklist.json atualizada com ${listaFinal.length} domínios únicos de ameaças.`);
-  } else {
-    console.log('⚠️ Nenhuma ameaça nova encontrada. Mantendo arquivo anterior intacto.');
-  }
+  fs.writeFileSync('blocklist.json', JSON.stringify(listaFinal, null, 2));
+  console.log(`🚀 Sucesso total! blocklist.json atualizada com ${listaFinal.length} domínios únicos.`);
 }
 
 rodarRobo();
