@@ -17,7 +17,7 @@ jobs:
       with:
         node-version: '20'
 
-    - name: Instalar dependencias do Chrome
+    - name: Instalar dependencias do Chrome  # ← sem isso o Puppeteer não abre
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -25,7 +25,7 @@ jobs:
           libnss3 libatk-bridge2.0-0 libdrm2 libxcomposite1 \
           libxdamage1 libxrandr2
 
-    - name: Instalar dependencias Node
+    - name: Instalar dependencias Node  # ← sem isso o puppeteer não existe
       run: npm install
 
     - name: Rodar script de raspagem híbrida
