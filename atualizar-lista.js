@@ -1,7 +1,7 @@
 const https = require('https');
 const fs = require('fs');
 
-const URL_PROCON = 'https://sistemas.procon.sp.gov.br/evitesites/list/evitesites.php';
+const URL_PROCON = 'https://sistemas.procon.sp.gov.br/evitesite/list/evitesites.php';
 const URL_OPENPHISH = 'https://openphish.com/feed.txt';
 
 // Lista de domínios legítimos que NUNCA devem entrar na blocklist
