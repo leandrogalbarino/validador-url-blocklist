@@ -1,0 +1,36 @@
+name: Atualizador Automatico Procon-SP
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch: 
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout do repositorio
+      uses: actions/checkout@v4
+
+    - name: Configurar Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Rodar script de raspagem híbrida
+      run: node atualizar-lista.js
+
+    - name: Verificar mudancas e commitar
+      run: |
+        git config --global user.name "Security Bot"
+        git config --global user.email "bot@github.com"
+        git add blocklist.json
+        if ! git diff --cached --exit-code; then
+          git commit -m "🤖 Bot: Blocklist atualizada (Procon-SP + OpenPhish)"
+          git push
+        else
+          echo "Nenhuma mudança detectada na lista."
+        fi
